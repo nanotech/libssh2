@@ -683,6 +683,18 @@ int _libssh2_rsa_new_private(libssh2_rsa_ctx **rsa,
   return _libssh2_key_new_from_path(rsa, kSecItemTypePrivateKey, filename, (char const *)passphrase);
 }
 
+int _libssh2_rsa_new_private_frommemory(libssh2_rsa_ctx **rsa,
+                                        LIBSSH2_SESSION *session,
+                                        const char *filedata, size_t filedata_len,
+                                        unsigned const char *passphrase) {
+  CFDataRef data = CFDataCreateWithBytesNoCopy(
+      kCFAllocatorDefault, (const uint8_t *)filedata, filedata_len, kCFAllocatorNull);
+  int error = _libssh2_key_new_from_data(
+      rsa, data, kSecItemTypePrivateKey, NULL, (char const *)passphrase);
+  CFRelease(data);
+  return error;
+}
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
@@ -1017,7 +1029,16 @@ int _libssh2_dsa_new_private(libssh2_dsa_ctx **dsa,
                              LIBSSH2_SESSION *session,
                              const char *filename,
                              unsigned const char *passphrase) {
-  return _libssh2_key_new_from_path(dsa, kSecItemTypePrivateKey, filename, (char const *)passphrase);
+  // Implementation auto-detects type
+  return _libssh2_rsa_new_private(dsa, session, filename, passphrase);
+}
+
+int _libssh2_dsa_new_private_frommemory(libssh2_rsa_ctx **dsa,
+                                        LIBSSH2_SESSION *session,
+                                        const char *filedata, size_t filedata_len,
+                                        unsigned const char *passphrase) {
+  // Implementation auto-detects type
+  return _libssh2_rsa_new_private_frommemory(dsa, session, filedata, filedata_len, passphrase);
 }
 
 #pragma clang diagnostic push
@@ -1384,16 +1405,41 @@ int _libssh2_pub_priv_keyfile(LIBSSH2_SESSION *session,
                               size_t *method_len_ref,
                               unsigned char **pubkeydata_ref,
                               size_t *pubkeydata_len_ref,
-                              const char *privatekeyPath,
-                              const char *passphrase) {
+                              const char *privatekeypath,
+                              const char *passphrase)
+{
+  CFDataRef privatekeydata = CreateDataFromFile(privatekeypath);
+  if (privatekeydata == NULL) {
+    return 1;
+  }
+  int error = _libssh2_pub_priv_keyfilememory(
+      session, method_ref, method_len_ref,
+      pubkeydata_ref, pubkeydata_len_ref,
+      (const char *)CFDataGetBytePtr(privatekeydata), CFDataGetLength(privatekeydata),
+      passphrase);
+  CFRelease(privatekeydata);
+  return error;
+}
+
+int _libssh2_pub_priv_keyfilememory(LIBSSH2_SESSION *session,
+                                    unsigned char **method_ref,
+                                    size_t *method_len_ref,
+                                    unsigned char **pubkeydata_ref,
+                                    size_t *pubkeydata_len_ref,
+                                    const char *privatekeydata,
+                                    size_t privatekeydata_len,
+                                    const char *passphrase) {
   assert(method_ref != NULL);
   assert(method_len_ref != NULL);
   assert(pubkeydata_ref != NULL);
   assert(pubkeydata_len_ref != NULL);
-  assert(privatekeyPath != NULL);
+  assert(privatekeydata != NULL);
 
   SecKeyRef key;
-  int error = _libssh2_key_new_from_path(&key, kSecItemTypePrivateKey, privatekeyPath, passphrase);
+  CFDataRef privatekeycfdata = CFDataCreateWithBytesNoCopy(
+      kCFAllocatorDefault, (const uint8_t *)privatekeydata, privatekeydata_len, kCFAllocatorNull);
+  int error = _libssh2_key_new_from_data(&key, privatekeycfdata, kSecItemTypePrivateKey, NULL, passphrase);
+  CFRelease(privatekeycfdata);
   if (error != 0) {
     return error;
   }
